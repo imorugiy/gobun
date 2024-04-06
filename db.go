@@ -9,6 +9,8 @@ import (
 type DB struct {
 	*sql.DB
 
+	fmter schema.Formatter
+
 	dialect schema.Dialect
 }
 
@@ -18,6 +20,7 @@ func NewDB(sqldb *sql.DB, dialect schema.Dialect) *DB {
 	db := &DB{
 		DB:      sqldb,
 		dialect: dialect,
+		fmter:   schema.NewFormatter(dialect),
 	}
 
 	return db

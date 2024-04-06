@@ -3,17 +3,20 @@ package pgdriver
 import (
 	"bufio"
 	"context"
+	"crypto/md5"
 	"crypto/tls"
 	"database/sql/driver"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 )
 
 const (
-	bindMsg         = 'B'
-	bindCompleteMsg = '2'
+	bindMsg            = 'B'
+	bindCompleteMsg    = '2'
+	passwordMessageMsg = 'p'
 
 	authenticationOKMsg = 'R'
 	errorResponseMsg    = 'E'
@@ -21,7 +24,8 @@ const (
 	backendKeyDataMsg   = 'K'
 	readyForQueryMsg    = 'Z'
 
-	authenticationOK = 0
+	authenticationOK          = 0
+	authenticationMD5Password = 5
 )
 
 func writeBindExecute(ctx context.Context, cn *Conn, name string, args []driver.NamedValue) error {
@@ -184,9 +188,68 @@ func auth(ctx context.Context, cn *Conn, rd *reader) error {
 	switch num {
 	case authenticationOK:
 		return nil
+	case authenticationMD5Password:
+		return authMD5(ctx, cn, rd)
 	default:
 		return fmt.Errorf("pgdriver: unknown authentication message: %q", num)
 	}
+}
+
+func authMD5(ctx context.Context, cn *Conn, rd *reader) error {
+	b, err := rd.ReadTemp(4)
+	if err != nil {
+		return err
+	}
+
+	secret := "md5" + md5s(md5s(cn.cfg.Password+cn.cfg.User)+string(b))
+	if err := writePassword(ctx, cn, secret); err != nil {
+		return err
+	}
+
+	return readAuthOK(cn, rd)
+}
+
+func readAuthOK(cn *Conn, rd *reader) error {
+	c, _, err := readMessageType(rd)
+	if err != nil {
+		return err
+	}
+
+	switch c {
+	case authenticationOKMsg:
+		num, err := readInt32(rd)
+		if err != nil {
+			return err
+		}
+		if num != 0 {
+			return fmt.Errorf("pgdriver: unexpected authentication code: %q", num)
+		}
+		return nil
+	case errorResponseMsg:
+		e, err := readError(rd)
+		if err != nil {
+			return err
+		}
+		return e
+	default:
+		return fmt.Errorf("pgdriver: unknown password message: %q", c)
+	}
+}
+
+func writePassword(ctx context.Context, cn *Conn, password string) error {
+	wb := getWriteBuffer()
+	defer putWriteBuffer(wb)
+
+	wb.StartMessage(passwordMessageMsg)
+	wb.WriteString(password)
+	wb.FinishMessage()
+
+	return cn.write(ctx, wb)
+}
+
+func md5s(s string) string {
+	h := md5.Sum([]byte(s))
+	return hex.EncodeToString(h[:])
 }
 
 func enableSSL(ctx context.Context, cn *Conn, tlsConf *tls.Config) error {

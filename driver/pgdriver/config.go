@@ -38,6 +38,7 @@ func newDefaultConfig() *Config {
 		TLSConfig:   nil, //&tls.Config{InsecureSkipVerify: true},
 
 		User:     env("PGUSER", "postgres"),
+		Password: env("PGPASSWORD", "postgres"),
 		Database: env("PGDATABASE", "postgres"),
 
 		ReadTimeout:  10 * time.Second,
